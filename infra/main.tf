@@ -134,3 +134,14 @@ resource "aws_instance" "app" {
     encrypted = true
   }
 }
+
+resource "aws_security_group" "wide_open" {
+  name   = "wide-open"
+  vpc_id = aws_vpc.main.id
+  ingress {
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
