@@ -1,0 +1,11 @@
+# Risk register: findings we have accepted, and why.
+# Each decision is tied to the one file it is about. The same finding
+# anywhere else, or any new kind of finding, still fails the pipeline.
+misconfigurations:
+  - id: AWS-0104
+    paths:
+      - "main.tf"
+    statement: >-
+      Both instances need outbound internet access through the NAT gateway
+      to install packages and updates. This rule is egress only: nothing on
+      the internet can open a connection in through it.

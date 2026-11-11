@@ -1,0 +1,117 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+
+# The built-in token can only read the repo. A job asks for more only if it needs it.
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # Every action is pinned to a full commit SHA. A version tag is a pointer
+      # anyone with access to that repo can move. A commit SHA cannot move.
+      # The comment says which release the SHA is.
+      - name: Check out the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@3fb12ec12f41e471780db15c232d5dd185dcb514 # v0.2.6
+        with:
+          version: v0.70.0
+
+      - name: Make a folder for the reports
+        run: mkdir -p reports
+
+      # Cheapest check first: is there a secret anywhere in the repo?
+      # Each scan saves a full report for DefectDojo, then runs the gate.
+      - name: Secret scan (blocks)
+        run: |
+          trivy fs --scanners secret --skip-dirs reports --format json --output reports/trivy-secrets.json .
+          trivy fs --scanners secret --skip-dirs reports --exit-code 1 .
+
+      # Every step from here runs even if an earlier one failed,
+      # so one red gate never hides another.
+      - name: Set up Python
+        if: ${{ !cancelled() }}
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        if: ${{ !cancelled() }}
+        run: pip install -r app/requirements.txt
+
+      - name: Run tests
+        if: ${{ !cancelled() }}
+        run: pytest app/
+
+      - name: SAST with Semgrep (blocks)
+        if: ${{ !cancelled() }}
+        run: |
+          pipx install semgrep==1.179.0
+          semgrep scan --config auto --error --json-output=reports/semgrep.json app/
+
+      - name: Dependency scan and SBOM (blocks)
+        if: ${{ !cancelled() }}
+        run: |
+          trivy fs --scanners vuln --format json --output reports/trivy-sca.json app/
+          trivy fs --format cyclonedx --output reports/sbom.cdx.json app/
+          trivy fs --scanners vuln --severity HIGH,CRITICAL --exit-code 1 app/
+
+      - name: IaC scan (blocks)
+        if: ${{ !cancelled() }}
+        run: |
+          trivy config --format json --output reports/trivy-iac.json infra/
+          trivy config --severity HIGH,CRITICAL --ignorefile .trivyignore.yaml --exit-code 1 infra/
+
+      - name: Build the Docker image
+        if: ${{ !cancelled() }}
+        run: docker build -t myapi:${{ github.sha }} app/
+
+      - name: Image scan (blocks)
+        if: ${{ !cancelled() }}
+        run: |
+          trivy image --format json --output reports/trivy-image.json myapi:${{ github.sha }}
+          trivy image --severity CRITICAL --ignore-unfixed --exit-code 1 myapi:${{ github.sha }}
+
+      # Start the image you just built, then attack it from outside.
+      - name: DAST with ZAP (reports only)
+        if: ${{ !cancelled() }}
+        run: |
+          docker run -d --name api -p 8000:8000 myapi:${{ github.sha }}
+          sleep 5
+          chmod 777 reports
+          docker run --rm --network host -v "$PWD/reports:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py -t http://localhost:8000 -I -x zap.xml
+
+      - name: Keep the reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: security-reports
+          path: reports/
+
+  # Deploying is the last stage of the lifecycle, so it only happens for main.
+  # A pull request never gets to sign in to AWS.
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: eu-west-2
+      - name: Deploy
+        run: echo "push image to ECR + update service here"
