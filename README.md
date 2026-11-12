@@ -21,8 +21,10 @@
 | **Runs on** | Every tool from the Security section, your capstone repo, DefectDojo on your VM |
 | **Deliverable** | A branch with five planted weaknesses caught twice, a decision for every finding in DefectDojo, four fixes proven by green gates. The branch is never merged |
 
-> [!WARNING]
-> **GitHub Actions is switched off on this template repo.** In **your** repo the pipeline and the weekly benchmark run for real.
+> [!NOTE]
+> [![CI/CD Pipeline](https://github.com/wjpearce-github/TechTwoForty-Security/actions/workflows/pipeline.yml/badge.svg)](https://github.com/wjpearce-github/TechTwoForty-Security/actions/workflows/pipeline.yml)
+>
+> **The pipeline runs on this template repo.** Open the [Actions tab](https://github.com/wjpearce-github/TechTwoForty-Security/actions) to see every scanner run as a gate against this code, and download the reports it keeps. There is no AWS account behind it, so the deploy job and the weekly benchmark are replaced by jobs called **set up AWS first** that list what to set. In **your** repo, with `AWS_DEPLOY_ROLE_ARN` and `AWS_AUDIT_ROLE_ARN` set, both run for real.
 
 ## The big picture
 
